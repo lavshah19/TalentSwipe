@@ -15,6 +15,8 @@ const envSchema = z.object({
         .map((o) => o.trim())
         .filter(Boolean),
     ),
+  JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
+  JWT_REFRESH_SECRET: z.string().min(1, "JWT_REFRESH_SECRET is required"),
 });
 
 const parsed = envSchema.safeParse(process.env);
