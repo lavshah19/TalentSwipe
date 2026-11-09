@@ -4,14 +4,17 @@ import prettier from "eslint-config-prettier";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules"] },
+  { ignores: ["dist", "node_modules", "src/generated"] },
   js.configs.recommended,
   // type-aware rules: catch floating promises, unsafe `any`, etc.
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {
       globals: globals.node,
-      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     rules: {
       "@typescript-eslint/no-unused-vars": [
@@ -23,7 +26,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.mjs"],
+    files: ["**/*.mjs", "prisma.config.ts"],
     ...tseslint.configs.disableTypeChecked,
   },
   prettier, // last: turns off rules that conflict with Prettier

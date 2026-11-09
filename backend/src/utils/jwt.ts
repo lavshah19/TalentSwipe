@@ -7,12 +7,11 @@ import type { IJwtPayload, IRefreshTokenPayload } from "../interfaces/jwt.interf
 const JWT_SECRET = env.JWT_SECRET;
 const JWT_REFRESH_SECRET = env.JWT_REFRESH_SECRET;
 
-export const generateAccessToken = (payload: {
-  id: string;
-}) => {
+export const generateAccessToken = (payload: { id: string }) => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: "15m" }); // for testing 15m later will be 1h
 };
-export const generateSocketTicket = (payload: {   // will be used to authenticate socket connection not need currently 
+export const generateSocketTicket = (payload: {
+  // will be used to authenticate socket connection not need currently
   id: string;
 }) => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: "60s" });
@@ -27,16 +26,14 @@ export const generateRefreshToken = (payload: { id: string }) => {
 export const verifyAccessToken = (token: string): IJwtPayload => {
   const decoded = jwt.verify(token, JWT_SECRET);
 
-  if (
-    typeof decoded !== "object" ||
-    !("id" in decoded) ) {
+  if (typeof decoded !== "object" || !("id" in decoded)) {
     throw createHttpError.Unauthorized("Invalid token payload");
   }
 
   return decoded as IJwtPayload;
 };
 
-export const verifyRefreshToken = (token: string): IRefreshTokenPayload=> {
+export const verifyRefreshToken = (token: string): IRefreshTokenPayload => {
   const decoded = jwt.verify(token, JWT_REFRESH_SECRET);
 
   if (typeof decoded !== "object" || !("id" in decoded)) {

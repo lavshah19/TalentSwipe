@@ -1,5 +1,6 @@
 import { env } from "./config/env";
 import { logger } from "./config/logger";
+import { prisma } from "./lib/prisma";
 import app from "./app";
 
 const server = app.listen(env.PORT, () => {
@@ -10,8 +11,11 @@ function shutdown(signal: string, code = 0) {
   logger.info(`${signal} received, shutting down`);
   server.close((err) => {
     if (err) logger.error({ err }, "Error while closing server");
-    // flush buffered logs before exiting
-    logger.flush(() => process.exit(err ? 1 : code));
+    // close DB pool after in-flight requests finish, then flush logs and exit
+    prisma
+      .$disconnect()
+      .catch((dbErr: unknown) => logger.error({ err: dbErr }, "Error disconnecting Prisma"))
+      .finally(() => logger.flush(() => process.exit(err ? 1 : code)));
   });
   // force exit if connections don't drain
   setTimeout(() => process.exit(1), 10_000).unref();

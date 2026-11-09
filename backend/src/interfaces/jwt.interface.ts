@@ -1,4 +1,3 @@
-
 export interface IJwtPayload {
   id: string;
   // standard JWT fields

@@ -1,0 +1,26 @@
+name: talentswipe
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: talentswipe-postgres
+    restart: unless-stopped
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from the backend's .env,
+    # so DATABASE_URL and the DB credentials live in one place
+    env_file: ./backend/.env
+    ports:
+      - "127.0.0.1:5432:5432" # localhost only, not exposed to the network
+    volumes:
+      - pgdata:/var/lib/postgresql # Postgres 18+ data path
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # backend:   add later, e.g. build: ./backend, env_file: ./backend/.env,
+  #            depends_on: { postgres: { condition: service_healthy } }
+  # frontend:  build: ./frontend
+
+volumes:
+  pgdata:
