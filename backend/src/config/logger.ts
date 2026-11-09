@@ -8,6 +8,9 @@ export const logger = pino({
   redact: ["req.headers.authorization", "req.headers.cookie", "*.password", "*.token"],
   // pretty output locally, raw JSON in production (for log aggregators)
   ...(env.NODE_ENV === "development" && {
-    transport: { target: "pino-pretty", options: { colorize: true, translateTime: "SYS:standard" } },
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true, translateTime: "SYS:standard" },
+    },
   }),
 });

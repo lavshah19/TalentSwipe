@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SerializedRequest, SerializedResponse } from "pino";
 import { pinoHttp } from "pino-http";
 import { logger } from "../config/logger";
 
@@ -22,8 +23,13 @@ export const requestLogger = pinoHttp({
   customErrorMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
   // keep lines short: just what you'd want from morgan
   serializers: {
-    req: (req) => ({ id: req.id, method: req.method, url: req.url, ip: req.remoteAddress }),
-    res: (res) => ({ statusCode: res.statusCode }),
+    req: (req: SerializedRequest) => ({
+      id: req.id,
+      method: req.method,
+      url: req.url,
+      ip: req.remoteAddress,
+    }),
+    res: (res: SerializedResponse) => ({ statusCode: res.statusCode }),
   },
   autoLogging: { ignore: (req) => req.url === "/health" }, // skip load-balancer pings
 });
