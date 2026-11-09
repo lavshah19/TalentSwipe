@@ -42,5 +42,5 @@ export async function seedUsers() {
     logger.info(`User ready: ${email} (${roleName})`);
   }
 
-  logger.info(`Demo users share the password: ${DEV_PASSWORD}`);
+//   logger.info(`Demo users share the password: ${DEV_PASSWORD}`);
 }
