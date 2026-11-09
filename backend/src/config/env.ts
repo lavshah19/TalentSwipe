@@ -19,6 +19,7 @@ const envSchema = z.object({
     protocol: /^postgres(ql)?$/,
     error: "DATABASE_URL must be a postgres URL",
   }),
+  REDIS_URL: z.url().default("redis://localhost:6379"),
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
   JWT_REFRESH_SECRET: z.string().min(1, "JWT_REFRESH_SECRET is required"),
 });
