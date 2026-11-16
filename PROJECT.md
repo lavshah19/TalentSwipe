@@ -36,7 +36,7 @@ An AI-powered, two-sided hiring marketplace where recruiters discover candidates
 
 - **LangChain.js** (`@langchain/*`): resume analysis, structured extraction, LLM integration, embeddings.
 - **LangGraph.js** (`@langchain/langgraph`): orchestrating multi-step AI workflows.
-- **Vector similarity (pgvector)**: match resumes with job descriptions.
+- **Vector simila           → Socket.IO tells the user "resume processed"rity (pgvector)**: match resumes with job descriptions.
 - **Match explanations**: why a candidate fits a job, and which skills are missing.
 
 ## Tech stack
