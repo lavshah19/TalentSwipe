@@ -34,8 +34,8 @@ An AI-powered, two-sided hiring marketplace where recruiters discover candidates
 
 ## AI
 
-- **LangChain**: resume analysis, structured extraction, LLM integration, embeddings.
-- **LangGraph**: orchestrating multi-step AI workflows.
+- **LangChain.js** (`@langchain/*`): resume analysis, structured extraction, LLM integration, embeddings.
+- **LangGraph.js** (`@langchain/langgraph`): orchestrating multi-step AI workflows.
 - **Vector similarity (pgvector)**: match resumes with job descriptions.
 - **Match explanations**: why a candidate fits a job, and which skills are missing.
 
@@ -45,14 +45,14 @@ An AI-powered, two-sided hiring marketplace where recruiters discover candidates
 |-------|------------|
 | Frontend | Next.js + TypeScript |
 | Backend | Node.js + Express + TypeScript |
-| AI service | Python + FastAPI |
-| AI framework | LangChain + LangGraph |
+| AI | TypeScript, inside the Node backend (no Python, no separate AI service) |
+| AI framework | LangChain.js + LangGraph.js |
 | Database | PostgreSQL |
 | Vector search | pgvector |
 | ORM | Prisma |
 | Cache / Queue | Redis + BullMQ |
 | Real-time chat | Socket.IO |
-| File storage | S3-compatible storage |
+| File storage | S3 (floci locally, AWS S3 in prod) |
 | DevOps | Docker |
 
 ## Domain decisions
@@ -61,6 +61,8 @@ An AI-powered, two-sided hiring marketplace where recruiters discover candidates
 - Company 1—N Jobs (a recruiter/company posts many jobs).
 - Job seeker interacts with many jobs (many swipes/applications).
 - Swipe is per **(candidate, job)** pair; a **match = candidate + job**. The same candidate can match different jobs.
+- **All TypeScript, no Python.** AI runs with LangChain.js/LangGraph.js in the Node codebase.
+- **Background jobs use BullMQ + Redis, not SQS + Lambda.** Redis is already running, the servers are long-lived, and local dev stays a single container. Flow: upload PDF to S3, enqueue a BullMQ job, a worker runs the LangGraph pipeline, the result goes to Postgres/pgvector, and Socket.IO notifies the user. Floci is used only to emulate S3 locally.
 
 ## Status
 
