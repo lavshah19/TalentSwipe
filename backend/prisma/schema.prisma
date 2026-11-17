@@ -1,7 +1,16 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// TalentSwipe schema. See ../../PROJECT.md for the domain.
+//
+// Conventions for new tables:
+//   - ids are uuid v7 (time-ordered, so inserts stay index-friendly on hot tables like swipes/messages)
+//   - tables are snake_case plural via @@map
+//   - timestamps are timestamptz
+//   - soft delete (deletedAt) only on things users "delete" but we must keep for history
+//     (users, companies, jobs). Everything else hard-deletes / cascades.
+//
+// pgvector: embeddings live in the `ai` Postgres schema (ai.candidate_embeddings, ai.job_embeddings),
+// created by hand-written migration SQL. Prisma only manages `public`, so it never tries to drop
+// the HNSW indexes it cannot model. Read/write them with $queryRaw; `embeddedAt` here tracks freshness.
+// ponytail: dim fixed to 1536 (OpenAI text-embedding-3-small); changing model = new column + backfill.
 
 generator client {
   provider = "prisma-client"
@@ -12,6 +21,8 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─────────────────────────────── Auth (existing) ───────────────────────────────
+
 model User {
   id            String         @id @default(uuid())
   email         String         @unique
@@ -21,9 +32,16 @@ model User {
   roleId        String
   role          Role           @relation(fields: [roleId], references: [id])
   refreshTokens RefreshToken[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  deletedAt     DateTime?
+
+  candidate  CandidateProfile?
+  recruiter  RecruiterProfile?
+  jobsPosted Job[]             @relation("JobPostedBy")
+  swipes     Swipe[]           @relation("SwipedBy")
+  messages   Message[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 
   @@index([roleId])
   @@map("users")
@@ -60,4 +78,370 @@ model RefreshToken {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+// ─────────────────────────────── Enums ───────────────────────────────
+
+enum CompanySize {
+  SIZE_1_10
+  SIZE_11_50
+  SIZE_51_200
+  SIZE_201_1000
+  SIZE_1000_PLUS
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  FREELANCE
+}
+
+enum WorkMode {
+  ONSITE
+  REMOTE
+  HYBRID
+}
+
+enum ExperienceLevel {
+  INTERN
+  JUNIOR
+  MID
+  SENIOR
+  LEAD
+  EXECUTIVE
+}
+
+enum JobStatus {
+  DRAFT
+  OPEN
+  PAUSED
+  CLOSED
+}
+
+enum ResumeStatus {
+  UPLOADED // in S3, job enqueued
+  PROCESSING // worker running the LangGraph pipeline
+  PROCESSED
+  FAILED
+}
+
+enum SkillSource {
+  AI // extracted from resume
+  MANUAL // added/confirmed by the user
+}
+
+enum SwipeSide {
+  CANDIDATE // job seeker swiping on a job
+  RECRUITER // recruiter swiping on a candidate for a job
+}
+
+enum SwipeDirection {
+  LEFT
+  RIGHT
+}
+
+// A match doubles as the application: its stage is the hiring pipeline.
+enum MatchStage {
+  MATCHED
+  SCREENING
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED // by recruiter
+  WITHDRAWN // by candidate
+}
+
+// ─────────────────────────────── Company / recruiter ───────────────────────────────
+
+model Company {
+  id          String       @id @default(uuid(7))
+  name        String       @db.VarChar(200)
+  slug        String       @unique @db.VarChar(200)
+  description String?
+  website     String?      @db.VarChar(500)
+  logoKey     String?      @db.VarChar(500) // S3 object key, not a URL
+  industry    String?      @db.VarChar(100)
+  size        CompanySize?
+  location    String?      @db.VarChar(200)
+
+  recruiters RecruiterProfile[]
+  jobs       Job[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  @@map("companies")
+}
+
+// Company 1—N recruiters. A recruiter belongs to exactly one company.
+model RecruiterProfile {
+  id             String  @id @default(uuid(7))
+  userId         String  @unique
+  user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId      String
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  title          String? @db.VarChar(150)
+  isCompanyAdmin Boolean @default(false) // can edit company + manage team
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([companyId])
+  @@map("recruiter_profiles")
+}
+
+// ─────────────────────────────── Candidate ───────────────────────────────
+
+model CandidateProfile {
+  id                String           @id @default(uuid(7))
+  userId            String           @unique
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  headline          String?          @db.VarChar(200)
+  summary           String?
+  location          String?          @db.VarChar(200)
+  yearsOfExperience Decimal?         @db.Decimal(4, 1)
+  experienceLevel   ExperienceLevel?
+  preferredWorkMode WorkMode?
+  openToWork        Boolean          @default(true)
+
+  // Current resume used for matching. Older uploads are kept in `resumes`.
+  activeResumeId String?  @unique
+  activeResume   Resume?  @relation("ActiveResume", fields: [activeResumeId], references: [id], onDelete: SetNull)
+  resumes        Resume[] @relation("CandidateResumes")
+
+  embeddedAt DateTime? @db.Timestamptz(3)
+
+  skills      CandidateSkill[]
+  experiences WorkExperience[]
+  educations  Education[]
+  swipes      Swipe[]
+  matches     Match[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([openToWork])
+  @@map("candidate_profiles")
+}
+
+model Resume {
+  id          String            @id @default(uuid(7))
+  candidateId String
+  candidate   CandidateProfile  @relation("CandidateResumes", fields: [candidateId], references: [id], onDelete: Cascade)
+  activeFor   CandidateProfile? @relation("ActiveResume")
+
+  s3Key     String  @unique @db.VarChar(500)
+  fileName  String  @db.VarChar(255)
+  mimeType  String  @db.VarChar(100)
+  sizeBytes Int
+  checksum  String? @db.VarChar(64) // sha256, to skip re-processing identical uploads
+
+  status      ResumeStatus @default(UPLOADED)
+  attempts    Int          @default(0)
+  error       String?
+  rawText     String? // extracted PDF text
+  parsedData  Json? // full structured LLM output, kept for re-runs/debugging
+  processedAt DateTime?    @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([candidateId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("resumes")
+}
+
+model WorkExperience {
+  id          String           @id @default(uuid(7))
+  candidateId String
+  candidate   CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  company     String           @db.VarChar(200)
+  title       String           @db.VarChar(200)
+  location    String?          @db.VarChar(200)
+  startDate   DateTime?        @db.Date
+  endDate     DateTime?        @db.Date // null = current
+  description String?
+  source      SkillSource      @default(AI)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([candidateId])
+  @@map("work_experiences")
+}
+
+model Education {
+  id           String           @id @default(uuid(7))
+  candidateId  String
+  candidate    CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  institution  String           @db.VarChar(200)
+  degree       String?          @db.VarChar(200)
+  fieldOfStudy String?          @db.VarChar(200)
+  startDate    DateTime?        @db.Date
+  endDate      DateTime?        @db.Date
+  grade        String?          @db.VarChar(50)
+  source       SkillSource      @default(AI)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([candidateId])
+  @@map("educations")
+}
+
+// ─────────────────────────────── Skills ───────────────────────────────
+
+// Canonical skill dictionary. `slug` is the normalized key ("node.js", "Node JS" -> "nodejs")
+// so candidate and job skills join exactly, which is what "missing skills" explanations need.
+model Skill {
+  id   String @id @default(uuid(7))
+  name String @db.VarChar(100)
+  slug String @unique @db.VarChar(100)
+
+  candidates CandidateSkill[]
+  jobs       JobSkill[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("skills")
+}
+
+model CandidateSkill {
+  candidateId       String
+  candidate         CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  skillId           String
+  skill             Skill            @relation(fields: [skillId], references: [id], onDelete: Restrict)
+  yearsOfExperience Decimal?         @db.Decimal(4, 1)
+  source            SkillSource      @default(AI)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([candidateId, skillId])
+  @@index([skillId]) // "which candidates have skill X"
+  @@map("candidate_skills")
+}
+
+model JobSkill {
+  jobId      String
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  skillId    String
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Restrict)
+  isRequired Boolean  @default(true) // false = nice to have
+  minYears   Decimal? @db.Decimal(4, 1)
+
+  @@id([jobId, skillId])
+  @@index([skillId])
+  @@map("job_skills")
+}
+
+// ─────────────────────────────── Jobs ───────────────────────────────
+
+model Job {
+  id         String  @id @default(uuid(7))
+  companyId  String
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  postedById String? // recruiter user; nullable so the job survives the recruiter leaving
+  postedBy   User?   @relation("JobPostedBy", fields: [postedById], references: [id], onDelete: SetNull)
+
+  title           String          @db.VarChar(200)
+  description     String
+  employmentType  EmploymentType
+  workMode        WorkMode
+  experienceLevel ExperienceLevel
+  location        String?         @db.VarChar(200)
+  minYears        Decimal?        @db.Decimal(4, 1)
+  salaryMin       Int? // whole currency units per year
+  salaryMax       Int?
+  currency        String?         @db.Char(3) // ISO 4217
+  openings        Int             @default(1)
+  status          JobStatus       @default(DRAFT)
+
+  embeddedAt DateTime? @db.Timestamptz(3)
+
+  skills  JobSkill[]
+  swipes  Swipe[]
+  matches Match[]
+
+  publishedAt DateTime? @db.Timestamptz(3)
+  closedAt    DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([companyId, status])
+  @@index([status, publishedAt(sort: Desc)]) // candidate feed: open jobs, newest first
+  @@index([postedById])
+  @@map("jobs")
+}
+
+// ─────────────────────────────── Swipe / match / chat ───────────────────────────────
+
+// One row per (candidate, job, side). Both sides RIGHT => create Match (in one transaction).
+// Unique constraint makes swipes idempotent and lets the feed query anti-join cheaply.
+model Swipe {
+  id          String           @id @default(uuid(7))
+  candidateId String
+  candidate   CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId       String
+  job         Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  side        SwipeSide
+  direction   SwipeDirection
+  swipedById  String? // the actual user (matters for recruiter teams)
+  swipedBy    User?            @relation("SwipedBy", fields: [swipedById], references: [id], onDelete: SetNull)
+  score       Float? // similarity score shown at swipe time, for analytics/tuning
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3) // undo / change of mind
+
+  @@unique([candidateId, jobId, side]) // also serves "jobs this candidate already swiped"
+  @@index([jobId, side, direction]) // recruiter feed + "who liked this job"
+  @@map("swipes")
+}
+
+// match = candidate + job. Also the application record (stage = pipeline).
+model Match {
+  id          String           @id @default(uuid(7))
+  candidateId String
+  candidate   CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId       String
+  job         Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  stage          MatchStage @default(MATCHED)
+  stageChangedAt DateTime   @default(now()) @db.Timestamptz(3)
+
+  // AI explanation: { summary, matchedSkills[], missingSkills[], ... }
+  score       Float?
+  explanation Json?
+
+  lastMessageAt DateTime? @db.Timestamptz(3) // inbox ordering without scanning messages
+  messages      Message[]
+
+  matchedAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([candidateId, jobId])
+  @@index([jobId, stage]) // recruiter pipeline board per job
+  @@index([candidateId, lastMessageAt(sort: Desc)]) // candidate inbox
+  @@map("matches")
+}
+
+// Chat is scoped to a match: no match, no messages.
+model Message {
+  id       String    @id @default(uuid(7))
+  matchId  String
+  match    Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  senderId String?
+  sender   User?     @relation(fields: [senderId], references: [id], onDelete: SetNull)
+  body     String
+  readAt   DateTime? @db.Timestamptz(3) // read by the other side
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  editedAt  DateTime? @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  @@index([matchId, createdAt(sort: Desc)]) // paginate a conversation
+  @@map("messages")
 }

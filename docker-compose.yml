@@ -2,7 +2,7 @@ name: talentswipe
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: pgvector/pgvector:pg18 # postgres 18 + pgvector
     container_name: talentswipe-postgres
     restart: unless-stopped
     # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from the backend's .env,
