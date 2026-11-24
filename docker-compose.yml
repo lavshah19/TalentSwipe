@@ -1,30 +1,40 @@
+# Production. Run with: docker compose --env-file .env.production up -d --build
 name: talentswipe
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
 
 services:
   postgres:
-    image: pgvector/pgvector:pg18 # postgres 18 + pgvector
-    container_name: talentswipe-postgres
+    image: pgvector/pgvector:pg18 # postgres 18 + pgvector (migrations CREATE EXTENSION vector)
     restart: unless-stopped
-    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from the backend's .env,
-    # so DATABASE_URL and the DB credentials live in one place
-    env_file: ./backend/.env
-    ports:
-      - "127.0.0.1:5432:5432" # localhost only, not exposed to the network
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
     volumes:
       - pgdata:/var/lib/postgresql # Postgres 18+ data path
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks: [data]
+    logging: *logging
 
   redis:
-    image: redis:8-alpine
-    container_name: talentswipe-redis
+    image: redis:7.4-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"] # AOF persistence, written to /data
-    ports:
-      - "127.0.0.1:6379:6379" # localhost only, not exposed to the network
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "--appendonly", "yes"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     volumes:
       - redisdata:/data
     healthcheck:
@@ -32,10 +42,79 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks: [data]
+    logging: *logging
 
-  # backend:   add later, e.g. build: ./backend, env_file: ./backend/.env,
-  #            depends_on: { postgres: { condition: service_healthy } }
-  # frontend:  build: ./frontend
+  migrate:
+    build:
+      context: ./backend
+      target: migrate
+    restart: "no"
+    <<: *hardening
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=public
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [data]
+    logging: *logging
+
+  backend:
+    build:
+      context: ./backend
+      target: runner
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN is required}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+    ports:
+      - "127.0.0.1:4000:4000" # reverse proxy with TLS goes in front
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [data, web]
+    logging: *logging
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+    restart: unless-stopped
+    <<: *hardening
+    ports:
+      - "127.0.0.1:3000:3000" # reverse proxy with TLS goes in front
+    depends_on:
+      backend: { condition: service_healthy }
+    healthcheck:
+      # 127.0.0.1, not localhost: Alpine resolves localhost to ::1 and Next listens on IPv4 only
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [web]
+    logging: *logging
+
+networks:
+  data:
+    internal: true # no outbound internet, no published ports
+  web:
 
 volumes:
   pgdata:

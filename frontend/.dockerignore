@@ -1,0 +1,13 @@
+node_modules
+out
+.git
+.env*
+!.env.example
+.next
+.claude
+.vscode
+.idea
+.agents
+*.log
+Dockerfile
+.dockerignore
