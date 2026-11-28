@@ -26,7 +26,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.mjs", "prisma.config.ts"],
+    files: ["**/*.mjs", "prisma.config.ts", "vitest.config.mts"],
     ...tseslint.configs.disableTypeChecked,
   },
   prettier, // last: turns off rules that conflict with Prettier

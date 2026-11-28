@@ -24,6 +24,44 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18 # same image as docker compose: migrations need pgvector
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: talentswipe
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d talentswipe"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # tests add "_test" to the database name and use Redis db 15 (see test/setup-env.ts)
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/talentswipe?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-only-access-secret
+      JWT_REFRESH_SECRET: ci-only-refresh-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
