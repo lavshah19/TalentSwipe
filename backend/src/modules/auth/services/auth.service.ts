@@ -8,7 +8,7 @@ import {
   verifyRefreshToken,
 } from "../../../utils/jwt.js";
 import type { AuthUser, DeviceInfo, IAuthResponse } from "../types/index.js";
-import type { UpdateProfileInput } from "../validator/auth.validator.js";
+import type { SignupRole, UpdateProfileInput } from "../validator/auth.validator.js";
 import { AuthRepository } from "../repository/auth.repository.js";
 import { SystemRoleName } from "../../../constant/role.js";
 
@@ -31,6 +31,7 @@ export class AuthService {
     email: string,
     password: string,
     fullName: string,
+    roleName: SignupRole,
     deviceInfo?: DeviceInfo,
     phone?: string,
   ) {
@@ -39,14 +40,16 @@ export class AuthService {
       throw new createHttpError.Conflict("Email is already registered.");
     }
 
-    // public sign-up always gets the least-privileged role
-    const role = await AuthRepository.findRoleByName(SystemRoleName.JOB_SEEKER);
+    // roleName is limited to SIGNUP_ROLES by the validator, so ADMIN can't get here
+    const role = await AuthRepository.findRoleByName(roleName);
     if (!role) {
-      throw new createHttpError.InternalServerError("Default role is not configured.");
+      throw new createHttpError.InternalServerError(`Role ${roleName} is not configured.`);
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await AuthRepository.createUser(email, hashedPassword, fullName, role.id, phone);
+    const user = await AuthRepository.createUser(email, hashedPassword, fullName, role.id, phone, {
+      withCandidateProfile: roleName === SystemRoleName.JOB_SEEKER,
+    });
 
     return AuthService.createTokenResponse(user, deviceInfo);
   }

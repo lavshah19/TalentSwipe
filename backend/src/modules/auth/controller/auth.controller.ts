@@ -43,9 +43,9 @@ export const AuthController = {
   },
 
   register: async (req: Request, res: Response) => {
-    const { email, password, fullName } = req.body as RegisterInput;
+    const { email, password, fullName, role } = req.body as RegisterInput;
     const deviceInfo = AuthService.getDeviceInfo(req.headers["user-agent"], req.ip);
-    const result = await AuthService.register(email, password, fullName, deviceInfo);
+    const result = await AuthService.register(email, password, fullName, role, deviceInfo);
     setAuthCookies(req, res, result);
 
     res.status(StatusCodes.CREATED).json({

@@ -22,9 +22,19 @@ export class AuthRepository {
     fullName: string,
     roleId: string,
     phone?: string,
+    { withCandidateProfile = false } = {},
   ) {
+    // Nested create = one atomic insert: a job seeker never exists without a profile,
+    // so later code never has to handle a missing CandidateProfile.
     return prisma.user.create({
-      data: { email, password, fullName, roleId, phone },
+      data: {
+        email,
+        password,
+        fullName,
+        roleId,
+        phone,
+        ...(withCandidateProfile && { candidate: { create: {} } }),
+      },
       include: { role: true },
     });
   }

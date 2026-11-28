@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { logger } from "../config/logger";
+import redis from "../config/redis";
 import { seedRoles } from "./role.seed";
 import { seedUsers } from "./user.seed";
 
@@ -15,4 +16,5 @@ main()
     logger.error({ err }, "Seeding failed");
     process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  // close both connections, or the open Redis socket keeps the process alive
+  .finally(() => Promise.allSettled([prisma.$disconnect(), redis.quit()]));
